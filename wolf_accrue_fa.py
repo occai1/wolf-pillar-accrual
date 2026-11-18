@@ -271,7 +271,11 @@ def _save(name, obj):
 
 def run(out_path, push, max_firms, batch=200):
     """Resumable sweep. State lives in STATE_DIR so a restart continues where it stopped."""
-    fca = FCA(os.environ["FCA_EMAIL"], os.environ["FCA_KEY"])
+    em, ky = os.environ["FCA_EMAIL"].strip(), os.environ["FCA_KEY"].strip()
+    print(f"  FCA creds: email={em[:3]}***@{em.split('@')[-1] if '@' in em else '?'} len={len(em)}, key len={len(ky)}", flush=True)
+    fca = FCA(em, ky)
+    probe = fca.get("/Firm/122702", {})
+    print(f"  FCA probe /Firm/122702: {str(probe)[:300]}", flush=True)
     st = _load("fa_state.json", {"frns": [], "done": [], "emails": []})
     if not st["frns"]:
         frns = set()
