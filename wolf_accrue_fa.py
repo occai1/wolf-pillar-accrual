@@ -124,6 +124,8 @@ class FCA:
                         print(f"  FCA 200 sample {url}: {raw[:400]}", flush=True)
                     return json.loads(raw)
             except urllib.error.HTTPError as e:
+                if e.code in (500, 413) and path == "/Search":
+                    return {"_overflow": True}
                 if e.code == 404:
                     if path == "/Search" and not getattr(self, "_logged404", False):
                         self._logged404 = True
@@ -139,17 +141,19 @@ class FCA:
                     return {}
                 time.sleep(3 * (attempt + 1))
 
-    def search_firms(self, term, max_pages=50):
+    ALPHA = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+    def _search_once(self, term, max_pages=50):
+        """Returns (frns, overflow)."""
         frns = set()
         for page in range(1, max_pages + 1):
             params = {"q": term, "type": "firm"}
             if page > 1:
                 params["pgnp"] = page
             res = self.get("/Search", params)
+            if isinstance(res, dict) and (res.get("_overflow") or str(res.get("Status")) == "413"):
+                return frns, True
             rows = data_list(res)
-            if page == 1 and not getattr(self, "_logged_ri", False) and isinstance(res, dict):
-                self._logged_ri = True
-                print(f"  FCA ResultInfo: {res.get('ResultInfo')}", flush=True)
             if not rows:
                 break
             for r in rows:
@@ -158,11 +162,30 @@ class FCA:
                 if frn.isdigit() and ("authorised" in status or "registered" in status or not status):
                     frns.add(frn)
             ri = res.get("ResultInfo") if isinstance(res, dict) else None
-            total = int(kget(ri, "total_page", "TotalPage", default=0) or 0) if isinstance(ri, dict) else 0
+            total = 0
+            if isinstance(ri, dict):
+                try:
+                    tc, pp = int(ri.get("total_count") or 0), int(ri.get("per_page") or 0)
+                    total = -(-tc // pp) if tc and pp else int(kget(ri, "total_page", "TotalPage", default=0) or 0)
+                except (TypeError, ValueError):
+                    total = 0
             if total and page >= total:
                 break
             if not total and len(rows) < 20:
                 break
+        return frns, False
+
+    def search_firms(self, term, depth=0, max_depth=3):
+        frns, overflow = self._search_once(term)
+        if not overflow:
+            return frns
+        if depth >= max_depth:
+            print(f"  overflow kept at depth limit: {term!r}", flush=True)
+            return frns
+        sep = " " if depth == 0 else ""
+        print(f"  splitting {term!r}", flush=True)
+        for c in self.ALPHA:
+            frns |= self.search_firms(term + sep + c, depth + 1, max_depth)
         return frns
 
     def firm(self, frn):
