@@ -118,9 +118,16 @@ class FCA:
             try:
                 req = urllib.request.Request(url, headers=self.h)
                 with urllib.request.urlopen(req, timeout=30) as r:
-                    return json.loads(r.read().decode("utf-8", "replace"))
+                    raw = r.read().decode("utf-8", "replace")
+                    if path == "/Search" and not getattr(self, "_logged200", False):
+                        self._logged200 = True
+                        print(f"  FCA 200 sample {url}: {raw[:400]}", flush=True)
+                    return json.loads(raw)
             except urllib.error.HTTPError as e:
                 if e.code == 404:
+                    if path == "/Search" and not getattr(self, "_logged404", False):
+                        self._logged404 = True
+                        print(f"  FCA 404 {url}: {e.read()[:300]!r}", flush=True)
                     return {}
                 if attempt == 2:
                     print(f"  FCA fail {path}: {e}", file=sys.stderr, flush=True)
