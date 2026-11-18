@@ -19,7 +19,7 @@ Run
   python3 wolf_accrue_fa.py --out fa_register.csv --push
   python3 wolf_accrue_fa.py --selftest
 """
-import argparse, csv, json, os, re, sys, time, urllib.parse, urllib.request
+import argparse, csv, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 from html.parser import HTMLParser
 
 FCA_BASE = "https://register.fca.org.uk/services/V0.1"
@@ -106,7 +106,9 @@ def domain_of(url):
 # ---------- FCA client ----------
 class FCA:
     def __init__(self, email, key):
-        self.h = {"X-AUTH-EMAIL": email, "X-AUTH-KEY": key, "Accept": "application/json"}
+        self.h = {"X-AUTH-EMAIL": email, "X-AUTH-KEY": key, "Accept": "application/json",
+                  "Content-Type": "application/json",
+                  "User-Agent": "Mozilla/5.0 (compatible; WolfRegister/1.0; +https://www.wolfailabs.com)"}
         self.t = Throttle()
 
     def get(self, path, params=None):
@@ -117,9 +119,16 @@ class FCA:
                 req = urllib.request.Request(url, headers=self.h)
                 with urllib.request.urlopen(req, timeout=30) as r:
                     return json.loads(r.read().decode("utf-8", "replace"))
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return {}
+                if attempt == 2:
+                    print(f"  FCA fail {path}: {e}", file=sys.stderr, flush=True)
+                    return {}
+                time.sleep(3 * (attempt + 1))
             except Exception as e:
                 if attempt == 2:
-                    print(f"  FCA fail {path}: {e}", file=sys.stderr)
+                    print(f"  FCA fail {path}: {e}", file=sys.stderr, flush=True)
                     return {}
                 time.sleep(3 * (attempt + 1))
 
@@ -253,6 +262,8 @@ def run(out_path, push, max_firms, batch=200):
             got = fca.search_firms(t)
             frns |= got
             print(f"search '{t}': {len(got)} firms, total {len(frns)}", flush=True)
+        if not frns:
+            raise RuntimeError("FCA search returned 0 firms; check FCA_EMAIL, FCA_KEY and API access")
         st["frns"] = sorted(frns)
         _save("fa_state.json", st)
     done, seen = set(st["done"]), set(st["emails"])
@@ -302,9 +313,10 @@ def worker(push):
             st = _load("fa_state.json", {})
             st["frns"], st["done"] = [], []
             _save("fa_state.json", st)
+            time.sleep(24 * 3600)
         except Exception as e:
             print("worker error:", e, flush=True)
-        time.sleep(24 * 3600)
+            time.sleep(3600)
 
 
 def brevo_push(rows):
