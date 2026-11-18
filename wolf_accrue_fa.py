@@ -159,7 +159,7 @@ class FCA:
             for r in rows:
                 frn = str(kget(r, "Reference Number", "FRN", "ReferenceNumber")).strip()
                 status = str(kget(r, "Status")).lower()
-                if frn.isdigit() and ("authorised" in status or "registered" in status or not status):
+                if frn.isdigit() and "no longer" not in status and "cancelled" not in status and ("authorised" in status or "registered" in status or not status):
                     frns.add(frn)
             ri = res.get("ResultInfo") if isinstance(res, dict) else None
             total = 0
