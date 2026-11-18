@@ -49,8 +49,8 @@ CONTACT_PATHS = ["", "/contact", "/contact-us", "/about", "/about-us", "/team",
 
 # ---------- helpers ----------
 class Throttle:
-    """FCA Register limit is 10 requests per 10 seconds; stay under it."""
-    def __init__(self, per=9, window=10.0):
+    """FCA Register limit is 50 requests per 10 seconds (429 blocks 1 min); stay under it."""
+    def __init__(self, per=40, window=10.0):
         self.per, self.window, self.stamps = per, window, []
     def wait(self):
         now = time.time()
@@ -126,6 +126,8 @@ class FCA:
             except urllib.error.HTTPError as e:
                 if e.code in (500, 413) and path == "/Search":
                     return {"_overflow": True}
+                if e.code == 429:
+                    time.sleep(65); continue
                 if e.code == 404:
                     if path == "/Search" and not getattr(self, "_logged404", False):
                         self._logged404 = True
