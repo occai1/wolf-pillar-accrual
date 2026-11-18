@@ -142,8 +142,14 @@ class FCA:
     def search_firms(self, term, max_pages=50):
         frns = set()
         for page in range(1, max_pages + 1):
-            res = self.get("/Search", {"q": term, "type": "firm", "pgnp": page})
+            params = {"q": term, "type": "firm"}
+            if page > 1:
+                params["pgnp"] = page
+            res = self.get("/Search", params)
             rows = data_list(res)
+            if page == 1 and not getattr(self, "_logged_ri", False) and isinstance(res, dict):
+                self._logged_ri = True
+                print(f"  FCA ResultInfo: {res.get('ResultInfo')}", flush=True)
             if not rows:
                 break
             for r in rows:
@@ -151,7 +157,11 @@ class FCA:
                 status = str(kget(r, "Status")).lower()
                 if frn.isdigit() and ("authorised" in status or "registered" in status or not status):
                     frns.add(frn)
-            if len(rows) < 20:
+            ri = res.get("ResultInfo") if isinstance(res, dict) else None
+            total = int(kget(ri, "total_page", "TotalPage", default=0) or 0) if isinstance(ri, dict) else 0
+            if total and page >= total:
+                break
+            if not total and len(rows) < 20:
                 break
         return frns
 
