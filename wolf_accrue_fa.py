@@ -175,7 +175,7 @@ class FCA:
                 break
         return frns, False
 
-    def search_firms(self, term, depth=0, max_depth=3):
+    def search_firms(self, term, depth=0, max_depth=8):
         frns, overflow = self._search_once(term)
         if not overflow:
             return frns
