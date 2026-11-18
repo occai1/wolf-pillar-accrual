@@ -300,51 +300,62 @@ def run(out_path, push, max_firms, batch=200):
     probe = fca.get("/Firm/122702", {})
     print(f"  FCA probe /Firm/122702: {str(probe)[:300]}", flush=True)
     st = _load("fa_state.json", {"frns": [], "done": [], "emails": []})
-    if not st["frns"]:
-        frns = set()
-        for t in SEARCH_TERMS:
-            got = fca.search_firms(t)
-            frns |= got
-            print(f"search '{t}': {len(got)} firms, total {len(frns)}", flush=True)
-        if not frns:
-            raise RuntimeError("FCA search returned 0 firms; check FCA_EMAIL, FCA_KEY and API access")
-        st["frns"] = sorted(frns)
-        _save("fa_state.json", st)
+    st.setdefault("terms_done", [])
     done, seen = set(st["done"]), set(st["emails"])
-    todo = [f for f in st["frns"] if f not in done][: max_firms or None]
     out_exists = os.path.exists(out_path)
     pending = []
+    processed = 0
     with open(out_path, "a", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         if not out_exists:
             w.writeheader()
-        for i, frn in enumerate(todo, 1):
-            f = fca.firm(frn)
-            if f["advises"] and f["people"]:
-                emails = site_emails(f["website"])
-                corp = bool(CORP_SUFFIX.search(str(f["name"]).strip()))
-                for p in f["people"]:
-                    first, last = split_name(p["name"])
-                    email = match_person(first, last, emails)
-                    if not email or email in seen:
-                        continue
-                    seen.add(email)
-                    row = {
-                        "EMAIL": email, "FIRSTNAME": first, "LASTNAME": last, "COMPANY": f["name"],
-                        "PILLAR": "Financial Advisors", "SOURCE": "REGISTER",
-                        "BASIS": "LEGIT_INTEREST" if corp else "CONSENT_REQUIRED",
-                        "SUBSCRIBER": "CORPORATE" if corp else "INDIVIDUAL",
-                        "CATCHMENT": postcode_area(f["postcode"]), "POSTCODE": f["postcode"],
-                        "WEBSITE": f["website"], "FRN": frn, "IRN": p["irn"]}
-                    w.writerow(row); pending.append(row)
-            done.add(frn)
-            if i % 25 == 0 or i == len(todo):
-                fh.flush()
-                if push and len(pending) >= batch or (push and i == len(todo) and pending):
-                    brevo_push(pending); pending = []
+        for t in SEARCH_TERMS + [None]:
+            if t is not None:
+                if t in st["terms_done"]:
+                    continue
+                got = fca.search_firms(t)
+                known = set(st["frns"])
+                st["frns"] = sorted(known | got)
+                print(f"search '{t}': {len(got)} firms, {len(got - known)} new, total {len(st['frns'])}", flush=True)
+            todo = [f for f in st["frns"] if f not in done]
+            for i, frn in enumerate(todo, 1):
+                if max_firms and processed >= max_firms:
+                    break
+                processed += 1
+                f = fca.firm(frn)
+                if f["advises"] and f["people"]:
+                    emails = site_emails(f["website"])
+                    corp = bool(CORP_SUFFIX.search(str(f["name"]).strip()))
+                    for p in f["people"]:
+                        first, last = split_name(p["name"])
+                        email = match_person(first, last, emails)
+                        if not email or email in seen:
+                            continue
+                        seen.add(email)
+                        row = {
+                            "EMAIL": email, "FIRSTNAME": first, "LASTNAME": last, "COMPANY": f["name"],
+                            "PILLAR": "Financial Advisors", "SOURCE": "REGISTER",
+                            "BASIS": "LEGIT_INTEREST" if corp else "CONSENT_REQUIRED",
+                            "SUBSCRIBER": "CORPORATE" if corp else "INDIVIDUAL",
+                            "CATCHMENT": postcode_area(f["postcode"]), "POSTCODE": f["postcode"],
+                            "WEBSITE": f["website"], "FRN": frn, "IRN": p["irn"]}
+                        w.writerow(row); pending.append(row)
+                done.add(frn)
+                if i % 25 == 0 or i == len(todo):
+                    fh.flush()
+                    if push and (len(pending) >= batch or (i == len(todo) and pending)):
+                        brevo_push(pending); pending = []
+                    st["done"], st["emails"] = sorted(done), sorted(seen)
+                    _save("fa_state.json", st)
+                    print(f"{len(done)}/{len(st['frns'])} firms, named emails {len(seen)}", flush=True)
+            if t is not None:
+                st["terms_done"].append(t)
                 st["done"], st["emails"] = sorted(done), sorted(seen)
                 _save("fa_state.json", st)
-                print(f"{len(done)}/{len(st['frns'])} firms, named emails {len(seen)}", flush=True)
+        if push and pending:
+            brevo_push(pending); pending = []
+    if not st["frns"]:
+        raise RuntimeError("FCA search returned 0 firms; check FCA_EMAIL, FCA_KEY and API access")
     print(f"SWEEP DONE firms {len(done)}, named emails {len(seen)} -> {out_path}", flush=True)
 
 
@@ -355,7 +366,7 @@ def worker(push):
         try:
             run(out, push, 0)
             st = _load("fa_state.json", {})
-            st["frns"], st["done"] = [], []
+            st["frns"], st["done"], st["terms_done"] = [], [], []
             _save("fa_state.json", st)
             time.sleep(24 * 3600)
         except Exception as e:
