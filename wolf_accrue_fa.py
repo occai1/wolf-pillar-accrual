@@ -362,7 +362,7 @@ def run(out_path, push, max_firms, batch=200):
 
 
 def worker(push):
-    """Railway mode: full sweep, then restart the sweep every 24 hours."""
+    """Railway mode: full sweep, wait SWEEP_GAP_HOURS (default 3), then sweep again."""
     out = os.path.join(STATE_DIR, "fa_register.csv")
     while True:
         try:
@@ -370,7 +370,9 @@ def worker(push):
             st = _load("fa_state.json", {})
             st["frns"], st["done"], st["terms_done"] = [], [], []
             _save("fa_state.json", st)
-            time.sleep(24 * 3600)
+            gap = float(os.environ.get("SWEEP_GAP_HOURS", "3"))
+            print(f"next sweep in {gap} hours", flush=True)
+            time.sleep(gap * 3600)
         except Exception as e:
             print("worker error:", e, flush=True)
             time.sleep(3600)
