@@ -307,6 +307,9 @@ def run(out_path, push, max_firms, batch=200):
     out_exists = os.path.exists(out_path)
     pending = []
     processed = 0
+    c = st.setdefault("counts", {})
+    def bump(k, n=1):
+        c[k] = c.get(k, 0) + n
     with open(out_path, "a", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         if not out_exists:
@@ -325,15 +328,37 @@ def run(out_path, push, max_firms, batch=200):
                     break
                 processed += 1
                 f = fca.firm(frn)
-                if f["advises"] and f["people"]:
+                bump("firms_checked")
+                if not f["advises"]:
+                    bump("firms_rejected_no_advising_permission")
+                elif not f["people"]:
+                    bump("firms_rejected_no_named_individuals")
+                elif not domain_of(f["website"]):
+                    bump("firms_rejected_no_website")
+                    bump("people_rejected_no_website", len(f["people"]))
+                if f["advises"] and f["people"] and domain_of(f["website"]):
                     emails = site_emails(f["website"])
+                    named = {e for e in emails if not GENERIC_LOCAL.match(e.split("@")[0])}
+                    bump("emails_on_sites_total", len(emails))
+                    bump("emails_rejected_generic", len(emails) - len(named))
+                    if not emails:
+                        bump("firms_site_no_emails_found")
                     corp = bool(CORP_SUFFIX.search(str(f["name"]).strip()))
+                    used = set()
                     for p in f["people"]:
+                        bump("people_checked")
                         first, last = split_name(p["name"])
                         email = match_person(first, last, emails)
-                        if not email or email in seen:
+                        if not email:
+                            bump("people_rejected_no_matching_email")
+                            continue
+                        used.add(email)
+                        if email in seen:
+                            bump("emails_rejected_duplicate")
                             continue
                         seen.add(email)
+                        bump("emails_accepted_new")
+                        bump("accepted_" + ("LEGIT_INTEREST" if corp else "CONSENT_REQUIRED"))
                         row = {
                             "EMAIL": email, "FIRSTNAME": first, "LASTNAME": last, "COMPANY": f["name"],
                             "PILLAR": "Financial Advisors", "SOURCE": "REGISTER",
@@ -356,6 +381,7 @@ def run(out_path, push, max_firms, batch=200):
                 _save("fa_state.json", st)
         if push and pending:
             brevo_push(pending); pending = []
+    print("SWEEP COUNTS " + json.dumps(c, sort_keys=True), flush=True)
     if not st["frns"]:
         raise RuntimeError("FCA search returned 0 firms; check FCA_EMAIL, FCA_KEY and API access")
     print(f"SWEEP DONE firms {len(done)}, named emails {len(seen)} -> {out_path}", flush=True)
@@ -368,7 +394,8 @@ def worker(push):
         try:
             run(out, push, 0)
             st = _load("fa_state.json", {})
-            st["frns"], st["done"], st["terms_done"] = [], [], []
+            st.setdefault("history", []).append({"ended": time.strftime("%Y-%m-%d %H:%M"), "counts": st.get("counts", {})})
+            st["frns"], st["done"], st["terms_done"], st["counts"] = [], [], [], {}
             _save("fa_state.json", st)
             gap = float(os.environ.get("SWEEP_GAP_HOURS", "3"))
             print(f"next sweep in {gap} hours", flush=True)
